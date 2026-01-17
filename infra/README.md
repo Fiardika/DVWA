@@ -38,7 +38,9 @@ aws ecr create-repository \
   --region ap-southeast-1
 ```
 
-### 2. Enable Amazon Inspector
+### 2. Enable Amazon Inspector & CodeGuru Security
+
+#### Amazon Inspector
 
 ```bash
 # Enable Inspector untuk ECR scanning
@@ -48,6 +50,23 @@ aws inspector2 enable \
 ```
 
 Inspector akan otomatis scan setiap image yang di-push ke ECR.
+
+#### CodeGuru Security
+
+CodeGuru Security perlu diaktifkan via console:
+
+1. **Buka AWS Console** → CodeGuru → **Security** (bukan Reviewer/Profiler)
+2. Klik **Get started** atau **Enable CodeGuru Security**
+3. Review pricing (ada free tier 90 hari pertama)
+4. Klik **Enable**
+5. Tunggu beberapa saat sampai status jadi "Enabled"
+
+**Note:** 
+- Pakai **CodeGuru Security**, bukan CodeGuru Reviewer (code review) atau Profiler (performance)
+- CodeGuru Security fokus ke vulnerability scanning (SAST)
+- Berbayar setelah free tier habis
+- Pricing: ~$0.50 per 100 lines of code scanned
+- Untuk demo, pastikan masih dalam free tier period atau disable setelah selesai
 
 ### 3. Buat S3 Bucket untuk Artifacts
 

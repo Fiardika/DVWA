@@ -5,7 +5,7 @@ version: 0.2
 
 env:
   variables:
-    AWS_REGION: "ap-southeast-3"
+    AWS_REGION: "ap-southeast-1"
 
 phases:
   pre_build:
