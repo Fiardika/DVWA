@@ -1,0 +1,93 @@
+version: 0.2
+
+# CodeBuild - SAST dengan CodeGuru Security
+# Security Scan Pipeline - Tech Talks UG Malang
+
+env:
+  variables:
+    AWS_REGION: "ap-southeast-3"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Starting SAST scan with CodeGuru Security..."
+      - echo "Scan name - $CODEBUILD_BUILD_ID"
+
+  build:
+    commands:
+      # Zip source code untuk upload ke CodeGuru
+      - echo "Preparing source code for analysis..."
+      - zip -r source-code.zip . -x "*.git*" -x "node_modules/*" -x "vendor/*"
+      
+      # Create scan dengan CodeGuru Security
+      - echo "Creating CodeGuru Security scan..."
+      - |
+        SCAN_NAME="dvwa-scan-$(date +%Y%m%d-%H%M%S)"
+        
+        # Create upload URL
+        UPLOAD_RESPONSE=$(aws codeguru-security create-upload-url --scan-name $SCAN_NAME)
+        UPLOAD_URL=$(echo $UPLOAD_RESPONSE | jq -r '.s3Url')
+        CODE_ARTIFACT_ID=$(echo $UPLOAD_RESPONSE | jq -r '.codeArtifactId')
+        
+        # Upload source code
+        echo "Uploading source code..."
+        curl -X PUT -T source-code.zip "$UPLOAD_URL"
+        
+        # Create scan
+        echo "Starting security scan..."
+        aws codeguru-security create-scan \
+          --scan-name $SCAN_NAME \
+          --resource-id '{"codeArtifactId":"'$CODE_ARTIFACT_ID'"}' \
+          --scan-type Standard \
+          --analysis-type Security
+        
+        # Wait for scan to complete (max 10 minutes)
+        echo "Waiting for scan to complete..."
+        for i in {1..60}; do
+          SCAN_STATUS=$(aws codeguru-security get-scan --scan-name $SCAN_NAME --query 'scanState' --output text)
+          echo "Scan status: $SCAN_STATUS"
+          
+          if [ "$SCAN_STATUS" = "Successful" ]; then
+            echo "Scan completed successfully!"
+            break
+          elif [ "$SCAN_STATUS" = "Failed" ]; then
+            echo "Scan failed!"
+            exit 1
+          fi
+          
+          sleep 10
+        done
+        
+        # Get findings
+        echo "Retrieving scan findings..."
+        aws codeguru-security get-findings --scan-name $SCAN_NAME > codeguru-findings.json
+        cat codeguru-findings.json
+        
+        # Check for critical/high findings
+        CRITICAL_COUNT=$(cat codeguru-findings.json | jq '[.findings[] | select(.severity == "Critical")] | length')
+        HIGH_COUNT=$(cat codeguru-findings.json | jq '[.findings[] | select(.severity == "High")] | length')
+        
+        echo "Critical findings: $CRITICAL_COUNT"
+        echo "High findings: $HIGH_COUNT"
+        
+        # Optional: Fail build if critical findings found
+        # if [ "$CRITICAL_COUNT" -gt 0 ]; then
+        #   echo "Critical vulnerabilities found! Failing build."
+        #   exit 1
+        # fi
+
+  post_build:
+    commands:
+      - echo "SAST scan completed"
+      - echo "Review findings in CodeGuru Security console"
+
+artifacts:
+  files:
+    - codeguru-findings.json
+  discard-paths: yes
+
+reports:
+  codeguru-security-report:
+    files:
+      - codeguru-findings.json
+    file-format: CODEGURUSECURITYJSON

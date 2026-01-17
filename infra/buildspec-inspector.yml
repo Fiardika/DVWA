@@ -1,0 +1,68 @@
+version: 0.2
+
+# CodeBuild - Container Image Scan dengan Amazon Inspector
+# Security Scan Pipeline - Tech Talks UG Malang
+
+env:
+  variables:
+    AWS_REGION: "ap-southeast-1"
+    ECR_REPO_NAME: "demo-ug-malang"
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$ECR_REPO_NAME
+
+  build:
+    commands:
+      - echo "Building Docker image for scanning..."
+      - docker build -t $REPOSITORY_URI:scan-temp .
+      
+      # Push image untuk di-scan oleh Inspector
+      - echo "Pushing image for Inspector scan..."
+      - docker push $REPOSITORY_URI:scan-temp
+      
+      # Tunggu Inspector scan selesai (Inspector auto-scan on push)
+      - echo "Waiting for Amazon Inspector scan..."
+      - sleep 60
+      
+      # Get scan findings dari Inspector
+      - echo "Retrieving Inspector findings..."
+      - |
+        aws inspector2 list-findings \
+          --filter-criteria '{
+            "ecrImageRepositoryName": [{"comparison": "EQUALS", "value": "'$ECR_REPO_NAME'"}],
+            "findingStatus": [{"comparison": "EQUALS", "value": "ACTIVE"}]
+          }' \
+          --max-results 100 > inspector-findings.json
+        
+        cat inspector-findings.json
+        
+        # Count findings by severity
+        CRITICAL=$(cat inspector-findings.json | jq '[.findings[] | select(.severity == "CRITICAL")] | length')
+        HIGH=$(cat inspector-findings.json | jq '[.findings[] | select(.severity == "HIGH")] | length')
+        MEDIUM=$(cat inspector-findings.json | jq '[.findings[] | select(.severity == "MEDIUM")] | length')
+        
+        echo "=== Inspector Scan Summary ==="
+        echo "Critical: $CRITICAL"
+        echo "High: $HIGH"
+        echo "Medium: $MEDIUM"
+        echo "=============================="
+        
+        # Optional: Fail if critical vulnerabilities found
+        # if [ "$CRITICAL" -gt 0 ]; then
+        #   echo "Critical vulnerabilities found!"
+        #   exit 1
+        # fi
+
+  post_build:
+    commands:
+      - echo "Inspector scan completed"
+      - echo "Review detailed findings in Amazon Inspector console"
+
+artifacts:
+  files:
+    - inspector-findings.json
+  discard-paths: yes
