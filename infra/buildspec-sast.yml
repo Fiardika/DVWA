@@ -11,25 +11,14 @@ phases:
   install:
     commands:
       - echo "Installing Amazon Inspector SBOM Generator..."
-      # Download inspector-sbomgen dengan URL yang benar
+      # URL dari dokumentasi AWS terbaru
+      # https://docs.aws.amazon.com/inspector/latest/user/sbom-generator.html
       - |
-        SBOMGEN_URL="https://amazon-inspector-sbomgen.s3.amazonaws.com/latest/linux/amd64/inspector-sbomgen"
-        curl -fsSL -o inspector-sbomgen "$SBOMGEN_URL"
-        
-        # Validasi download berhasil (bukan XML error)
-        if file inspector-sbomgen | grep -q "executable"; then
-          echo "Download successful - valid binary"
-          chmod +x inspector-sbomgen
-          mv inspector-sbomgen /usr/local/bin/
-          inspector-sbomgen --version
-        else
-          echo "Download failed or invalid file. Trying alternative method..."
-          # Alternative: download via AWS CLI dari S3
-          aws s3 cp s3://amazon-inspector-sbomgen/latest/linux/amd64/inspector-sbomgen ./inspector-sbomgen --region us-east-1
-          chmod +x inspector-sbomgen
-          mv inspector-sbomgen /usr/local/bin/
-          inspector-sbomgen --version
-        fi
+        wget -q https://amazon-inspector-sbomgen.s3.amazonaws.com/latest/linux/amd64/inspector-sbomgen.zip
+        unzip -q inspector-sbomgen.zip
+        chmod +x inspector-sbomgen
+        mv inspector-sbomgen /usr/local/bin/
+        inspector-sbomgen --version
 
   pre_build:
     commands:
@@ -78,13 +67,6 @@ phases:
         echo "Medium: $MEDIUM"
         echo "Low: $LOW"
         echo "========================================"
-        
-        # Fail build jika ada critical vulnerabilities
-        # Uncomment untuk enforce security gate
-        # if [ "$CRITICAL" -gt 0 ]; then
-        #   echo "CRITICAL vulnerabilities found! Failing build."
-        #   exit 1
-        # fi
 
   post_build:
     commands:
