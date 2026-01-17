@@ -7,7 +7,7 @@ Pipeline security scanning menggunakan native AWS services untuk Tech Talks UG M
 ## Architecture
 
 ```
-Source (GitHub) → SAST (CodeGuru) → Build (Docker/ECR) → Container Scan (Inspector)
+Source (GitHub) → SAST (Inspector SBOM) → Build (Docker/ECR) → Container Scan (Inspector)
 ```
 
 ## Files
@@ -15,7 +15,7 @@ Source (GitHub) → SAST (CodeGuru) → Build (Docker/ECR) → Container Scan (I
 | File | Deskripsi |
 |------|-----------|
 | `buildspec.yml` | Build & push Docker image ke ECR |
-| `buildspec-sast.yml` | SAST scan dengan CodeGuru Security |
+| `buildspec-sast.yml` | SAST scan dengan Amazon Inspector SBOM Generator |
 | `buildspec-inspector.yml` | Container scan dengan Amazon Inspector |
 | `pipeline.json` | Template CodePipeline (4 stages) |
 
@@ -23,10 +23,9 @@ Source (GitHub) → SAST (CodeGuru) → Build (Docker/ECR) → Container Scan (I
 
 1. **CodePipeline** - Orchestrator pipeline
 2. **CodeBuild** - Build Docker image + jalankan scan
-3. **CodeGuru Security** - Static Application Security Testing (SAST)
-4. **Amazon Inspector** - Container vulnerability scanning
-5. **ECR** - Container registry
-6. **S3** - Artifact storage
+3. **Amazon Inspector** - SAST (via SBOM Generator) + Container vulnerability scanning
+4. **ECR** - Container registry
+5. **S3** - Artifact storage
 
 ## Setup Manual
 
@@ -38,9 +37,7 @@ aws ecr create-repository \
   --region ap-southeast-1
 ```
 
-### 2. Enable Amazon Inspector & CodeGuru Security
-
-#### Amazon Inspector
+### 2. Enable Amazon Inspector
 
 ```bash
 # Enable Inspector untuk ECR scanning
@@ -51,22 +48,10 @@ aws inspector2 enable \
 
 Inspector akan otomatis scan setiap image yang di-push ke ECR.
 
-#### CodeGuru Security
-
-CodeGuru Security perlu diaktifkan via console:
-
-1. **Buka AWS Console** → CodeGuru → **Security** (bukan Reviewer/Profiler)
-2. Klik **Get started** atau **Enable CodeGuru Security**
-3. Review pricing (ada free tier 90 hari pertama)
-4. Klik **Enable**
-5. Tunggu beberapa saat sampai status jadi "Enabled"
-
-**Note:** 
-- Pakai **CodeGuru Security**, bukan CodeGuru Reviewer (code review) atau Profiler (performance)
-- CodeGuru Security fokus ke vulnerability scanning (SAST)
-- Berbayar setelah free tier habis
-- Pricing: ~$0.50 per 100 lines of code scanned
-- Untuk demo, pastikan masih dalam free tier period atau disable setelah selesai
+**Note tentang Inspector SBOM Generator:**
+- Tool CLI `inspector-sbomgen` di-download langsung di buildspec
+- Tidak perlu enable service tambahan
+- Menggunakan `inspector-scan:ScanSbom` API untuk analisis vulnerabilities
 
 ### 3. Buat S3 Bucket untuk Artifacts
 
@@ -128,13 +113,10 @@ Attach policy berikut (buat inline policy):
       "Resource": "*"
     },
     {
-      "Sid": "CodeGuruAccess",
+      "Sid": "InspectorSBOMAccess",
       "Effect": "Allow",
       "Action": [
-        "codeguru-security:CreateUploadUrl",
-        "codeguru-security:CreateScan",
-        "codeguru-security:GetScan",
-        "codeguru-security:GetFindings"
+        "inspector-scan:ScanSbom"
       ],
       "Resource": "*"
     },
@@ -163,8 +145,8 @@ Attach policy berikut (buat inline policy):
 
 **Penjelasan permissions:**
 - `ECRAccess` - Login, push/pull Docker images
-- `InspectorAccess` - Baca hasil scan vulnerabilities
-- `CodeGuruAccess` - Upload code & jalankan SAST scan
+- `InspectorAccess` - Baca hasil scan vulnerabilities dari ECR image
+- `InspectorSBOMAccess` - Scan SBOM untuk SAST (source code analysis)
 - `S3Access` - Simpan/ambil artifacts
 - `CloudWatchLogs` - Kirim logs build
 
@@ -253,7 +235,7 @@ Setelah itu:
 
 Buat 3 CodeBuild project via console atau CLI:
 
-#### Project 1: SAST Scan
+#### Project 1: SAST Scan (Inspector SBOM)
 
 ```bash
 aws codebuild create-project \
@@ -281,7 +263,7 @@ aws codebuild create-project \
 
 Buildspec: `infra/buildspec.yml`
 
-#### Project 3: Inspector Scan
+#### Project 3: Inspector Container Scan
 
 ```bash
 aws codebuild create-project \
@@ -386,16 +368,17 @@ Buildspec: `infra/buildspec-inspector.yml`
 
 **Final pipeline structure:**
 ```
-Source (GitHub) → Build (SAST) → DockerBuild → ContainerScan
+Source (GitHub) → SAST (Inspector SBOM) → DockerBuild → ContainerScan (Inspector)
 ```
 
 ## Demo Flow
 
 1. **Push code** ke GitHub → otomatis trigger pipeline
 2. **Stage 1 - Source**: Ambil code dari GitHub
-3. **Stage 2 - SAST**: CodeGuru scan source code
-   - Deteksi: SQL Injection, XSS, hardcoded secrets, dll
-   - Lihat findings di CodeGuru Security console
+3. **Stage 2 - SAST**: Inspector SBOM scan source code
+   - Generate SBOM dari dependencies
+   - Deteksi: Vulnerable packages, outdated libraries
+   - Output: `sbom.json`, `inspector-sast-findings.json`
 4. **Stage 3 - Build**: Build Docker image → push ke ECR
    - Image otomatis di-scan oleh Inspector
 5. **Stage 4 - Container Scan**: Ambil hasil scan Inspector
@@ -411,23 +394,34 @@ Source (GitHub) → Build (SAST) → DockerBuild → ContainerScan
    - Execution history
    - Duration tiap stage
 
-2. **CodeGuru Security Console**
-   - List vulnerabilities di source code
-   - Severity: Critical, High, Medium, Low
-   - Recommendations untuk fix
+2. **CodeBuild Logs - SAST Stage**
+   - SBOM generation output
+   - Vulnerability findings dari Inspector Scan API
+   - Severity breakdown: Critical, High, Medium, Low
 
 3. **Amazon Inspector Console**
    - CVE findings di container image
    - CVSS scores
    - Affected packages & fix available
 
-4. **CodeBuild Logs**
-   - Real-time build logs
-   - Scan results summary
+4. **Artifacts**
+   - `sbom.json` - Software Bill of Materials
+   - `inspector-sast-findings.json` - SAST scan results
+   - `inspector-findings.json` - Container scan results
+
+## Perbedaan SAST vs Container Scan
+
+| Aspek | SAST (Inspector SBOM) | Container Scan |
+|-------|----------------------|----------------|
+| **Target** | Source code dependencies | Container image |
+| **Timing** | Sebelum build | Setelah push ke ECR |
+| **Deteksi** | Vulnerable libraries di code | CVE di OS packages + app |
+| **Tool** | inspector-sbomgen + ScanSbom API | Inspector auto-scan ECR |
 
 ## Tips Demo
 
 - Jalankan pipeline dari awal untuk show full flow
-- Highlight findings yang menarik (SQL Injection di DVWA pasti banyak 😄)
-- Tunjukkan severity levels & recommendations
+- Highlight perbedaan findings antara SAST vs Container scan
+- Tunjukkan SBOM output untuk explain software composition
+- Show severity levels & affected packages
 - Explain kenapa DVWA vulnerable by design
