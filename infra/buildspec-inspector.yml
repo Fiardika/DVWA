@@ -6,7 +6,7 @@ version: 0.2
 env:
   variables:
     AWS_REGION: "ap-southeast-1"
-    ECR_REPO_NAME: "demo-ug-malang"
+    ECR_REPO_NAME: "aws-ug-demo-ecr"
 
 phases:
   pre_build:

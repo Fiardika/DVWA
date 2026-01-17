@@ -2,7 +2,6 @@ version: 0.2
 
 # CodeBuild - SAST dengan Amazon Inspector SBOM Generator
 # Security Scan Pipeline - Tech Talks UG Malang
-# Menggantikan CodeGuru Security (deprecated)
 
 env:
   variables:
@@ -12,10 +11,25 @@ phases:
   install:
     commands:
       - echo "Installing Amazon Inspector SBOM Generator..."
-      # Download inspector-sbomgen untuk Linux x86_64
-      - curl -Lo inspector-sbomgen https://amazon-inspector-sbomgen.s3.amazonaws.com/latest/linux/amd64/inspector-sbomgen
-      - chmod +x inspector-sbomgen
-      - mv inspector-sbomgen /usr/local/bin/
+      # Download inspector-sbomgen dengan URL yang benar
+      - |
+        SBOMGEN_URL="https://amazon-inspector-sbomgen.s3.amazonaws.com/latest/linux/amd64/inspector-sbomgen"
+        curl -fsSL -o inspector-sbomgen "$SBOMGEN_URL"
+        
+        # Validasi download berhasil (bukan XML error)
+        if file inspector-sbomgen | grep -q "executable"; then
+          echo "Download successful - valid binary"
+          chmod +x inspector-sbomgen
+          mv inspector-sbomgen /usr/local/bin/
+          inspector-sbomgen --version
+        else
+          echo "Download failed or invalid file. Trying alternative method..."
+          # Alternative: download via AWS CLI dari S3
+          aws s3 cp s3://amazon-inspector-sbomgen/latest/linux/amd64/inspector-sbomgen ./inspector-sbomgen --region us-east-1
+          chmod +x inspector-sbomgen
+          mv inspector-sbomgen /usr/local/bin/
+          inspector-sbomgen --version
+        fi
 
   pre_build:
     commands:
@@ -32,7 +46,14 @@ phases:
           --outfile sbom.json \
           --scanners programming-language-packages
         
-        echo "SBOM generated successfully"
+        # Validasi SBOM generated
+        if [ -f sbom.json ]; then
+          echo "SBOM generated successfully"
+          echo "SBOM size: $(wc -c < sbom.json) bytes"
+        else
+          echo "ERROR: SBOM generation failed!"
+          exit 1
+        fi
         
       # Scan SBOM dengan Inspector Scan API
       - echo "Scanning SBOM with Amazon Inspector..."
